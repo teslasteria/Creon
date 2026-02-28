@@ -283,6 +283,37 @@ class ThemeManager:
         QLabel#fundsValue, QLabel#remainingValue {{
             font-weight: bold;
         }}
+
+        # FIXED: Скрыть стрелки у QLineEdit (если будем использовать)
+        QLineEdit {{
+            background-color: {c['bg_secondary']};
+            border: 1px solid {c['border']};
+            border-radius: 6px;
+            padding: 8px 12px;
+            color: {c['text_primary']};
+            selection-background-color: {c['accent']};
+        }}
+        
+        QLineEdit:focus {{
+            border: 2px solid {c['accent']};
+        }}
+        
+        /* FIXED: Убрать стрелки у QSpinBox (на всякий случай) */
+        QSpinBox::up-button, QSpinBox::down-button {{
+            width: 0px;
+            border: none;
+            background: transparent;
+        }}
+        
+        /* FIXED: Вертикальный заголовок таблицы */
+        QHeaderView::section:vertical {{
+            background-color: {c['bg_secondary']};
+            color: {c['text_primary']};
+            min-width: 35px;
+            padding: 5px;
+            border: 1px solid {c['border']};
+            font-weight: normal;
+        }}
         """
     
     def toggle_theme(self) -> str:

@@ -5,10 +5,11 @@ from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QTableWidget, QTableWidgetItem, QMenuBar,
     QMenu, QStatusBar, QFileDialog, QMessageBox,
-    QSpinBox, QPushButton, QHeaderView, QFrame
+    QLineEdit, QPushButton, QHeaderView, QFrame
 )
-from PyQt6.QtGui import QAction, QFont
-from PyQt6.QtCore import Qt, QDate
+from PyQt6.QtGui import QAction, QFont, QDoubleValidator
+from PyQt6.QtCore import Qt, QDate, QRegularExpression
+from PyQt6.QtGui import QRegularExpressionValidator
 
 from creon.core.theme_manager import ThemeManager
 from creon.core.config import config, DEFAULT_CATEGORIES
@@ -22,32 +23,20 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         
-        # Инициализация
         self.theme_manager = ThemeManager()
         self.theme_manager.set_theme(config.theme)
-        
-        # Регистрация шрифтов (отключена)
         setup_fonts()
         
-        # Хранилище данных
         self.storage = FinanceStorage(config.storage_path)
-        
-        # Текущие данные месяца
         self.current_data: MonthData = None
         self.has_unsaved_changes = False
-        
-        # Флаг для блокировки рекурсивных обновлений
         self._updating_table = False
         
-        # Настройка UI
         self._setup_ui()
         self._setup_menu()
         self._apply_theme()
-        
-        # Загрузка текущего месяца
         self._load_current_month()
         
-        # Настройка окна
         self.setWindowTitle("Creon - Finance Tracker")
         self.setMinimumSize(1000, 700)
         self.resize(1200, 800)
@@ -63,7 +52,7 @@ class MainWindow(QMainWindow):
         
         # Заголовок
         title_label = QLabel("Creon")
-        title_label.setObjectName("appTitle")  # ← Убедиться, что есть
+        title_label.setObjectName("appTitle")
         title_label.setFont(QFont("Sans Serif", 32, QFont.Weight.Bold))
         main_layout.addWidget(title_label)
         
@@ -71,24 +60,42 @@ class MainWindow(QMainWindow):
         balance_frame = self._create_balance_panel()
         main_layout.addWidget(balance_frame)
         
-        # Таблица категорий - БЕЗ КАСТОМНЫХ ДЕЛЕГАТОВ
+        # Таблица категорий
         self.table = QTableWidget()
         self.table.setColumnCount(4)
         self.table.setHorizontalHeaderLabels([
             "Category", "Planned Budget", "Actual Budget", "Difference"
         ])
-        self.table.horizontalHeader().setSectionResizeMode(
-            QHeaderView.ResizeMode.Stretch
-        )
+        
+        # Настройка заголовков
+        header = self.table.horizontalHeader()
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Interactive)
+        header.setSectionResizeMode(1, QHeaderView.ResizeMode.Fixed)
+        header.setSectionResizeMode(2, QHeaderView.ResizeMode.Fixed)
+        header.setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)
+        self.table.setColumnWidth(1, 130)  # FIXED: ширина для Planned
+        self.table.setColumnWidth(2, 130)  # FIXED: ширина для Actual
+        
+        # FIXED: Настройка вертикального заголовка (номера строк)
+        v_header = self.table.verticalHeader()
+        v_header.setDefaultSectionSize(35)  # Высота строки
+        v_header.setMinimumWidth(35)         # Мин. ширина для номеров
+        v_header.setStyleSheet("""
+            QHeaderView::section:vertical {
+                min-width: 35px;
+                padding: 5px;
+                text-align: center;
+            }
+        """)
+        
         self.table.setAlternatingRowColors(True)
         self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
-        # Разрешаем редактирование только числовых колонок
-        self.table.setEditTriggers(QTableWidget.EditTrigger.DoubleClicked)
-        
-        # ⚠️ НЕ используем setItemDelegate - это вызывает segfault!
+        self.table.setEditTriggers(QTableWidget.EditTrigger.DoubleClicked | 
+                                   QTableWidget.EditTrigger.EditKeyPressed)
         
         # Сигналы
         self.table.cellChanged.connect(self._on_cell_changed)
+        self.table.itemChanged.connect(self._on_item_changed)  # Для редактирования имён
         
         main_layout.addWidget(self.table, stretch=1)
         
@@ -113,6 +120,19 @@ class MainWindow(QMainWindow):
         funds_label = QLabel("Total Funds:")
         funds_label.setFont(QFont("Sans Serif", 14, QFont.Weight.Bold))
         
+        # FIXED: QLineEdit вместо QSpinBox (убираем стрелки)
+        self.funds_input = QLineEdit()
+        self.funds_input.setPlaceholderText("0.00")
+        self.funds_input.setFont(QFont("Sans Serif", 14))
+        self.funds_input.setAlignment(Qt.AlignmentFlag.AlignRight)
+        self.funds_input.setFixedWidth(120)
+        
+        # Валидация: только положительные числа с 2 знаками после запятой
+        regex = QRegularExpression(r"^\d*\.?\d{0,2}$")
+        validator = QRegularExpressionValidator(regex)
+        self.funds_input.setValidator(validator)
+        self.funds_input.textChanged.connect(self._on_funds_changed)
+        
         self.funds_value = QLabel("$0.00")
         self.funds_value.setFont(QFont("Sans Serif", 18, QFont.Weight.Bold))
         self.funds_value.setObjectName("fundsValue")
@@ -125,16 +145,9 @@ class MainWindow(QMainWindow):
         self.remaining_value.setFont(QFont("Sans Serif", 18, QFont.Weight.Bold))
         self.remaining_value.setObjectName("remainingValue")
         
-        # Input для Total Funds
-        self.funds_input = QSpinBox()
-        self.funds_input.setRange(0, 10000000)
-        self.funds_input.setPrefix("$ ")
-        self.funds_input.setFont(QFont("Sans Serif", 14))
-        self.funds_input.valueChanged.connect(self._on_funds_changed)
-        
         layout.addWidget(funds_label)
         layout.addWidget(self.funds_input)
-        layout.addSpacing(50)
+        layout.addSpacing(30)
         layout.addWidget(remaining_label)
         layout.addWidget(self.remaining_value)
         layout.addStretch()
@@ -146,33 +159,27 @@ class MainWindow(QMainWindow):
         layout = QHBoxLayout()
         layout.setSpacing(15)
         
-        # Add Category
         self.btn_add_category = QPushButton("+ Add Category")
-        self.btn_add_category.setObjectName("btnAddCategory")  # ← ДОБАВИТЬ
+        self.btn_add_category.setObjectName("btnAddCategory")
         self.btn_add_category.clicked.connect(self._add_category)
         layout.addWidget(self.btn_add_category)
         
-        # Theme Toggle
         self.btn_theme = QPushButton("🌙 Dark Mode")
-        self.btn_theme.setObjectName("btnTheme")  # ← ДОБАВИТЬ
+        self.btn_theme.setObjectName("btnTheme")
         self.btn_theme.clicked.connect(self._toggle_theme)
         layout.addWidget(self.btn_theme)
         
-        # Set Storage Path
         self.btn_storage = QPushButton("📁 Storage Path")
-        self.btn_storage.setObjectName("btnStorage")  # ← ДОБАВИТЬ
+        self.btn_storage.setObjectName("btnStorage")
         self.btn_storage.clicked.connect(self._set_storage_path)
         layout.addWidget(self.btn_storage)
         
         layout.addStretch()
-        
         return layout
     
     def _setup_menu(self):
         """Настройка меню"""
         menubar = self.menuBar()
-        
-        # File Menu
         file_menu = menubar.addMenu("File")
         
         load_action = QAction("Load Data", self)
@@ -191,15 +198,12 @@ class MainWindow(QMainWindow):
         file_menu.addAction(delete_action)
         
         file_menu.addSeparator()
-        
         exit_action = QAction("Exit", self)
         exit_action.setShortcut("Ctrl+Q")
         exit_action.triggered.connect(self.close)
         file_menu.addAction(exit_action)
         
-        # Settings Menu
         settings_menu = menubar.addMenu("Settings")
-        
         theme_action = QAction("Toggle Theme", self)
         theme_action.setShortcut("Ctrl+T")
         theme_action.triggered.connect(self._toggle_theme)
@@ -251,9 +255,9 @@ class MainWindow(QMainWindow):
             self.table.setRowCount(len(self.current_data.categories))
             
             for row, category in enumerate(self.current_data.categories):
-                # Category Name
+                # Category Name - FIXED: делаем редактируемым
                 name_item = QTableWidgetItem(category.name)
-                name_item.setFlags(name_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                name_item.setFlags(name_item.flags() | Qt.ItemFlag.ItemIsEditable)
                 self.table.setItem(row, 0, name_item)
                 
                 # Planned Budget
@@ -266,21 +270,15 @@ class MainWindow(QMainWindow):
                 actual_item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
                 self.table.setItem(row, 2, actual_item)
                 
-                # Difference
+                # Difference - FIXED: всегда пересчитываем
                 diff = category.difference
                 diff_item = QTableWidgetItem(f"{diff:.2f}")
                 diff_item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-                
-                # Цвет в зависимости от разницы
                 if diff > 0:
                     diff_item.setForeground(Qt.GlobalColor.darkGreen)
                 elif diff < 0:
                     diff_item.setForeground(Qt.GlobalColor.red)
-                
                 self.table.setItem(row, 3, diff_item)
-                
-                # ← Чередование цветов строк (если нужно программно)
-                # QSS делает это автоматически через alternate-background-color
         except Exception as e:
             print(f"Error refreshing table: {e}")
         finally:
@@ -303,6 +301,25 @@ class MainWindow(QMainWindow):
         except Exception as e:
             print(f"Error updating balance: {e}")
     
+    def _update_difference_cell(self, row: int, category):
+        """FIXED: Обновление только ячейки Difference"""
+        diff = category.difference
+        
+        diff_item = self.table.item(row, 3)
+        if diff_item is None:
+            diff_item = QTableWidgetItem()
+            diff_item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+            self.table.setItem(row, 3, diff_item)
+        
+        diff_item.setText(f"{diff:.2f}")
+        
+        if diff > 0:
+            diff_item.setForeground(Qt.GlobalColor.darkGreen)
+        elif diff < 0:
+            diff_item.setForeground(Qt.GlobalColor.red)
+        else:
+            diff_item.setForeground(self.theme_manager.colors.get('text_primary', Qt.GlobalColor.black))
+    
     def _on_cell_changed(self, row: int, column: int):
         """Обработка изменения ячейки таблицы"""
         if self._updating_table:
@@ -318,33 +335,79 @@ class MainWindow(QMainWindow):
         category = self.current_data.categories[row]
         
         try:
-            if column == 1:  # Planned
+            if column == 1:  # Planned Budget
                 text = item.text().strip()
                 value = float(text) if text else 0.0
                 self.current_data.update_category(category.name, planned=value)
-            elif column == 2:  # Actual
+                # FIXED: обновляем Difference сразу
+                self._update_difference_cell(row, category)
+                
+            elif column == 2:  # Actual Budget
                 text = item.text().strip()
                 value = float(text) if text else 0.0
                 self.current_data.update_category(category.name, actual=value)
+                # FIXED: обновляем Difference сразу
+                self._update_difference_cell(row, category)
+                
+            elif column == 0:  # Category Name - FIXED: обработка смены имени
+                new_name = item.text().strip()
+                if new_name and new_name != category.name:
+                    # Проверка на дубликаты
+                    existing = {c.name for c in self.current_data.categories if c != category}
+                    if new_name in existing:
+                        QMessageBox.warning(
+                            self, "Duplicate Name",
+                            f"Category '{new_name}' already exists."
+                        )
+                        # Восстанавливаем старое имя
+                        item.setText(category.name)
+                        return
+                    
+                    # Переименовываем категорию
+                    old_name = category.name
+                    category.name = new_name
+                    self.has_unsaved_changes = True
+                    self.statusBar.showMessage(f"Renamed: {old_name} → {new_name}")
+                    return  # Не обновляем баланс при смене имени
+            
             else:
-                return
+                return  # Игнорируем колонку Difference
             
             self.has_unsaved_changes = True
             self._update_balance_display()
             self.statusBar.showMessage("Unsaved changes")
             
-        except ValueError as e:
-            print(f"Invalid value entered: {e}")
+        except ValueError:
+            # Восстанавливаем старое значение при ошибке ввода
+            if column == 1:
+                item.setText(f"{category.planned:.2f}")
+            elif column == 2:
+                item.setText(f"{category.actual:.2f}")
         except Exception as e:
             print(f"Error in cellChanged: {e}")
     
-    def _on_funds_changed(self, value: int):
+    def _on_item_changed(self, item: QTableWidgetItem):
+        """Дополнительная обработка изменений (для имён категорий)"""
+        row = self.table.row(item)
+        column = self.table.column(item)
+        
+        # Если имя категории изменилось через itemChanged
+        if column == 0 and not self._updating_table:
+            self._on_cell_changed(row, column)
+    
+    def _on_funds_changed(self, text: str):
         """Изменение общих средств"""
-        if self.current_data:
-            self.current_data.total_funds = float(value)
+        if not self.current_data:
+            return
+        
+        try:
+            value = float(text) if text else 0.0
+            self.current_data.total_funds = value
             self.has_unsaved_changes = True
             self._update_balance_display()
             self.statusBar.showMessage("Unsaved changes")
+        except ValueError:
+            pass  # Игнорируем некорректный ввод
     
     def _add_category(self):
         """Добавление новой категории"""
@@ -375,11 +438,8 @@ class MainWindow(QMainWindow):
     def _set_storage_path(self):
         """Установка пути к хранилищу"""
         path = QFileDialog.getExistingDirectory(
-            self,
-            "Select Storage Directory",
-            str(config.storage_path)
+            self, "Select Storage Directory", str(config.storage_path)
         )
-        
         if path:
             config.storage_path = path
             self.storage = FinanceStorage(config.storage_path)
@@ -407,8 +467,7 @@ class MainWindow(QMainWindow):
             return
         
         reply = QMessageBox.question(
-            self,
-            "Delete Month",
+            self, "Delete Month",
             f"Are you sure you want to delete {self.current_data.filename}?",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
         )
@@ -422,8 +481,7 @@ class MainWindow(QMainWindow):
         """Обработка закрытия приложения"""
         if self.has_unsaved_changes:
             reply = QMessageBox.question(
-                self,
-                "Save Changes",
+                self, "Save Changes",
                 "You have unsaved changes. Do you want to save them?",
                 QMessageBox.StandardButton.Save | 
                 QMessageBox.StandardButton.Discard | 
