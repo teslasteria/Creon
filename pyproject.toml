@@ -1,0 +1,23 @@
+[tool.poetry]
+name = "creon"
+version = "0.2.0"
+description = "Modern Finance Tracker MVP"
+authors = ["Constantine <teslasteria@yandex.ru>"]
+readme = "README.md"
+packages = [{include = "creon", from = "src"}]
+
+[tool.poetry.dependencies]
+python = "^3.13"
+PyQt6 = "^6.7.0"
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^8.0.0"
+pytest-qt = "^4.2.0"  
+black = "^24.0.0"
+
+[build-system]
+requires = ["poetry-core>=1.0.0"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.poetry.scripts]
+creon = "creon.main:main"
